@@ -1,0 +1,4 @@
+aircraft_type,cruise_speed,fuel_burn_per_hour
+A320,840,2500
+B737,850,2600
+B787,900,5600

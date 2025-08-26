@@ -1,0 +1,5 @@
+waypoint,distance_km,wind,turbulence
+Lagos,1050,-20,0.1
+Sahara,900,-5,0.2
+Madrid,800,15,0.05
+London,700,30,0.08
