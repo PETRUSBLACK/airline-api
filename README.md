@@ -1,152 +1,99 @@
-# ✈️ Airline Fuel Optimization API
-
 A **FastAPI-based service** for estimating and optimizing aircraft fuel usage across different flight routes.  
+
 It allows users to:  
-- List available aircraft data  
+- List available aircraft  
 - Estimate fuel consumption for a single aircraft + route  
 - Compare multiple routes and choose the most fuel-efficient one  
+- Run a **local client script (`agent_local.py`)** to interact with the API  
 
 ---
 
 ## 🚀 Getting Started
 
 ### Run with Docker
-```bash
-docker run -d -p 8001:8000 airline-api
 ```
-
-### Run Normally (Development)
-```bash
-uvicorn app.main:app --reload
-```
-
-### Build Docker Image
-```bash
 docker build -t airline-api .
-```
+docker run -d -p 8001:8000 airline-api
 
----
 
-## 📂 Project Structure
+RUN LOCALLY
 
-```
+uvicorn app.main:app --reload
+Project Structure
+
 FastAPI/
 │── app/
 │   ├── main.py          # FastAPI entry point with API routes
 │   ├── models.py        # Core entities: Aircraft, RouteSegment
 │   ├── optimizer.py     # Fuel estimation & route optimization logic
 │   └── __init__.py
-│
 │── data/
 │   ├── aircraft.csv     # Example aircraft dataset
 │   ├── routes.csv       # Example flight route
-│   └── routes_option_*.csv  # Alternative route files
-│
+│   └── routes_option_*.csv  # Alternative routes
+│── agent_local.py       # Local client to interact with the API
 │── Dockerfile
 │── requirements.txt
 │── README.md
-```
 
----
 
-## 🛠️ Core Components
+CORE COMPONENTS
+models.py → Defines the data structures:
 
-### **models.py**
-Defines the **data structures** used in the system.
+Aircraft (cruise speed, fuel burn, etc.)
 
-- **Aircraft** → Stores aircraft performance parameters (cruise speed, fuel burn per hour).  
-- **RouteSegment** → Stores details of a segment in a flight route (distance, wind, turbulence).
+RouteSegment (waypoint, distance, wind, turbulence)
 
----
+optimizer.py → Business logic:
 
-### **optimizer.py**
-Contains the **business logic** for the app.
+load_aircraft_data(file) → Load aircraft data from CSV
 
-#### Functions
+load_route(file) → Load route segments from CSV
 
-- **`load_aircraft_data(file_path)`**  
-  Reads aircraft data from CSV.  
-  Returns → `{aircraft_type: Aircraft(...)}`
-  
-- **`load_route(file_path)`**  
-  Reads route segments from CSV.  
-  Returns → list of `RouteSegment` objects  
+estimate_fuel(aircraft, route) → Calculate fuel consumption
 
-- **`estimate_fuel(aircraft, route)`**  
-  Calculates total fuel consumption for a given aircraft on a route.  
-  Considers:  
-  - Cruise speed adjusted for wind  
-  - Turbulence as a multiplier  
-  Returns → Rounded fuel in kg  
+optimize_routes(...) → Compare multiple routes
 
-- **`optimize_routes(aircraft, route_files, aircraft_file)`**  
-  Compares multiple routes for the same aircraft.  
-  Returns →  
-  - Fuel estimates per route  
-  - The **best (lowest fuel)** route  
+main.py → API endpoints with FastAPI
 
-🔹 **Role:** Encapsulates all the core business logic (data loading, calculation, optimization).  
-🔹 **Uses:** `Aircraft` and `RouteSegment` classes from `models.py` for structured calculations.  
+API ENDPOINTS
+Method	Endpoint	Description
+GET	/	Welcome message & API info
+GET	/aircraft	List available aircraft
+GET	/estimate/{aircraft_type}/{route_file}	Estimate fuel for one route
+POST	/optimize/{aircraft_type}	Compare multiple routes and pick the best one
 
----
+QUICK START WITH agent_local.py
 
-## 📖 API Endpoints
+You can interact with the API locally using the client script.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET`  | `/` | Welcome message & API info |
-| `GET`  | `/aircraft` | List available aircraft data |
-| `GET`  | `/estimate/{aircraft_type}/{route_file}` | Estimate fuel for one aircraft & one route |
-| `POST` | `/optimize/{aircraft_type}` | Compare multiple routes for a given aircraft |
 
----
+python agent_local.py
+It will ask for:
 
-## 🔎 Example Usage
+Aircraft type (e.g., A320)
 
-### Estimate Fuel (Single Route)
-**Request:**  
-```
-GET /estimate/A320/routes.csv
-```
+Route CSV files (comma-separated)
 
-**Response:**  
-```json
-{
-  "aircraft": "A320",
-  "route_file": "routes.csv",
-  "estimated_fuel_kg": 5120
-}
-```
+Example Run:
 
----
+Aircraft (e.g., A320): A320
+Comma-separated route CSVs (e.g., routes.csv,routes_option_b.csv): routes.csv,routes_option_b.csv
 
-### Optimize Fuel (Multiple Routes)
-**Request:**  
-```
-POST /optimize/A320
-```
+Example Output:
 
-**Body (JSON):**
-```json
-[
-  "routes.csv",
-  "routes_option_b.csv",
-  "routes_option_c.csv"
-]
-```
+Aircraft: A320
+Options:
+ - routes.csv: total_fuel_kg = 5120
+    * WP1: 1200 kg
+    * WP2: 1800 kg
+    * WP3: 2120 kg
+ - routes_option_b.csv: total_fuel_kg = 4980
+    * WP1: 1150 kg
+    * WP2: 1700 kg
+    * WP3: 2130 kg
 
-**Response:**  
-```json
-{
-  "aircraft": "A320",
-  "results": {
-    "routes.csv": 5120,
-    "routes_option_b.csv": 4980,
-    "routes_option_c.csv": 5300
-  },
-  "best_route": "routes_option_b.csv",
-  "fuel_saved_kg": 140
-}
-```
+Best route: routes_option_b.csv with 4980 kg
 
----
+Savings vs others:
+  routes.csv: extra_vs_best_kg = 140
