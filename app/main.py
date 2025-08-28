@@ -1,20 +1,19 @@
+# app/main.py
 from fastapi import FastAPI, UploadFile, File, HTTPException, Body
-from pydantic import BaseModel
+from typing import List
+from .optimizer import load_aircraft_data, load_route, estimate_fuel, optimize_routes
+from .agent import ask_agent
 import os
 
-from app.models import load_aircraft_data
-from app.optimizer import load_route, estimate_fuel, optimize_routes
-
-app = FastAPI(title="Airline Fuel Optimization API")
+app = FastAPI(
+    title="Airline Fuel Optimization API",
+    description="Estimate and optimize fuel usage for aircraft routes. Includes an AI assistant endpoint.",
+    version="1.0.0",
+)
 
 # Ensure data dir exists
 os.makedirs("data", exist_ok=True)
 
-# load once; you can reload if you change the CSV on disk
-_aircraft_cache = load_aircraft_data("data/aircraft.csv")
-
-class RouteFiles(BaseModel):
-    files: list[str]
 
 @app.get("/")
 def home():
@@ -22,23 +21,39 @@ def home():
         "message": "Welcome to Airline Fuel Optimization API!",
         "endpoints": {
             "/aircraft": "List available aircraft (from data/aircraft.csv)",
-            "/estimate/{aircraft_type}/{route_file}": "Estimate fuel for a given aircraft + route CSV",
-            "/optimize/{aircraft_type} (POST)": "Compare multiple routes (JSON body: {\"files\":[..]})",
+            "/estimate/{aircraft_type}/{route_file}": "Estimate fuel for an aircraft on one route CSV",
+            "/optimize/{aircraft_type} (POST)": "Compare multiple route CSVs (JSON body: list of filenames)",
+            "/ask-agent?question=...": "Ask the AI assistant a question about routes/fuel",
             "/upload-route/ (POST multipart)": "Upload a route CSV to data/"
         }
     }
 
+
 @app.get("/aircraft")
 def list_aircraft():
-    # reload to pick any file changes
-    global _aircraft_cache
-    _aircraft_cache = load_aircraft_data("data/aircraft.csv")
-    return {k: vars(v) for k, v in _aircraft_cache.items()}
+    """
+    Returns all aircraft loaded from data/aircraft.csv
+    """
+    try:
+        aircraft_data = load_aircraft_data("data/aircraft.csv")
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="data/aircraft.csv not found")
+    # Convert Aircraft objects to dicts for JSON serialization
+    return {k: vars(v) for k, v in aircraft_data.items()}
+
 
 @app.get("/estimate/{aircraft_type}/{route_file}")
-def estimate_route(aircraft_type: str, route_file: str):
-    # Validate aircraft
-    if aircraft_type not in _aircraft_cache:
+def estimate(aircraft_type: str, route_file: str):
+    """
+    Estimate total fuel for a single route file.
+    Example: GET /estimate/A320/routes.csv
+    """
+    try:
+        aircraft_data = load_aircraft_data("data/aircraft.csv")
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="data/aircraft.csv not found")
+
+    if aircraft_type not in aircraft_data:
         raise HTTPException(status_code=404, detail=f"Aircraft {aircraft_type} not found")
 
     path = os.path.join("data", route_file)
@@ -46,26 +61,47 @@ def estimate_route(aircraft_type: str, route_file: str):
         raise HTTPException(status_code=404, detail=f"Route file {route_file} not found")
 
     route = load_route(path)
-    estimation = estimate_fuel(_aircraft_cache[aircraft_type], route)
-    return {"aircraft": aircraft_type, "route_file": route_file, **estimation}
+    fuel = estimate_fuel(aircraft_data[aircraft_type], route)
+    return {"aircraft": aircraft_type, "route_file": route_file, "fuel_estimate_kg": fuel}
+
 
 @app.post("/optimize/{aircraft_type}")
-def optimize(aircraft_type: str, body: RouteFiles = Body(...)):
-    # body.files is a list of CSV filenames (strings)
-    result = optimize_routes(aircraft_type, body.files, aircraft_file="data/aircraft.csv")
-    return result
+def optimize(aircraft_type: str, route_files: List[str] = Body(...)):
+    """
+    Compare several route CSV files for the given aircraft.
+    Body example (raw JSON):
+      ["routes.csv", "routes_option_b.csv", "routes_option_c.csv"]
+    """
+    try:
+        result = optimize_routes(aircraft_type, route_files, aircraft_file="data/aircraft.csv")
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/ask-agent")
+def ask_ai(question: str):
+    """
+    Ask the AI assistant a freeform question (returns a text answer).
+    Example: /ask-agent?question=Which%20route%20saves%20the%20most%20fuel%3F
+    """
+    try:
+        answer = ask_agent(question)
+        return {"question": question, "answer": answer}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/upload-route/")
 async def upload_route(file: UploadFile = File(...)):
     """
-    Upload a route CSV to the server (saves to data/<filename>).
-    Use Swagger to upload or curl:
-    curl -F "file=@routes_option_b.csv" http://localhost:8000/upload-route/
+    Upload a route CSV (saves to data/<filename>).
+    Use Swagger or curl:
+      curl -F "file=@routes_option_b.csv" http://localhost:8000/upload-route/
     """
-    dest = os.path.join("data", file.filename)
-    # simple validation
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only .csv files are allowed")
+    dest = os.path.join("data", file.filename)
     with open(dest, "wb") as buffer:
         content = await file.read()
         buffer.write(content)

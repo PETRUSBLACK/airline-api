@@ -3,3 +3,4 @@ uvicorn[standard]
 python-multipart   # for file upload support
 requests           # for the agent script
 pydantic
+openai>=1.30.0

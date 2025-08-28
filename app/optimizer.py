@@ -1,100 +1,40 @@
-import csv
-import os
-from typing import List, Dict
-from app.models import Aircraft, RouteSegment, load_aircraft_data
+import pandas as pd
+from .models import Aircraft, RouteSegment
 
-def load_route(file_path: str) -> List[RouteSegment]:
-    """
-    Reads CSV:
-    waypoint,distance_km,wind,turbulence
-    Returns list[RouteSegment]
-    """
-    segments = []
-    with open(file_path, newline="") as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            segments.append(
-                RouteSegment(
-                    row["waypoint"],
-                    float(row["distance_km"]),
-                    float(row["wind"]),
-                    float(row["turbulence"])
-                )
-            )
-    return segments
+def load_aircraft_data(file_path="aircraft.csv"):
+    df = pd.read_csv(file_path)
+    data = {}
+    for _, row in df.iterrows():
+        data[row["aircraft_type"]] = Aircraft(
+            row["aircraft_type"], row["cruise_speed"], row["fuel_burn_per_hour"]
+        )
+    return data
 
-def estimate_fuel(aircraft: Aircraft, route: List[RouteSegment]) -> Dict:
-    """
-    Returns:
-    {
-      "total_fuel": 12345.67,
-      "segments": [
-         {"waypoint":"Lagos","distance_km":..., "fuel": ...}, ...
-      ]
-    }
-    Calculation per segment:
-      effective_speed = aircraft.cruise_speed + wind_kmh
-      time_hours = distance_km / max(effective_speed, 100)
-      base_fuel = time_hours * fuel_burn_per_hour
-      final_fuel = base_fuel * (1 + turbulence)
-    """
-    total = 0.0
-    breakdown = []
+def load_route(file_path):
+    df = pd.read_csv(file_path)
+    return [
+        RouteSegment(r["waypoint"], r["distance_km"], r["wind"], r["turbulence"])
+        for _, r in df.iterrows()
+    ]
+
+def estimate_fuel(aircraft, route):
+    total_fuel = 0
     for seg in route:
-        eff_speed = aircraft.cruise_speed + seg.wind_kmh
-        if eff_speed < 100:
-            eff_speed = 100.0
-        hours = seg.distance_km / eff_speed
-        base = hours * aircraft.fuel_burn_per_hour
-        final = base * (1.0 + seg.turbulence)
-        breakdown.append({
-            "waypoint": seg.waypoint,
-            "distance_km": seg.distance_km,
-            "wind_kmh": seg.wind_kmh,
-            "turbulence": seg.turbulence,
-            "fuel_kg": round(final, 2)
-        })
-        total += final
+        effective_speed = aircraft.cruise_speed + seg.wind
+        hours = seg.distance_km / max(effective_speed, 1)
+        fuel = hours * aircraft.fuel_burn_per_hour * (1 + seg.turbulence)
+        total_fuel += fuel
+    return round(total_fuel, 2)
 
-    return {"total_fuel": round(total, 2), "segments": breakdown}
+def optimize_routes(aircraft, route_files, aircraft_file="aircraft.csv"):
+    results = {}
+    best_route, best_fuel = None, float("inf")
 
-def optimize_routes(aircraft_type: str, route_files: List[str], aircraft_file: str = "data/aircraft.csv") -> Dict:
-    """
-    Compare multiple CSV routes for an aircraft.
-    Returns detailed options + best route info.
-    Skips missing files and reports them.
-    """
-    aircrafts = load_aircraft_data(aircraft_file)
-    if aircraft_type not in aircrafts:
-        return {"error": f"Aircraft {aircraft_type} not found"}
+    for file in route_files:
+        route = load_route(file)
+        fuel = estimate_fuel(aircraft, route)
+        results[file] = fuel
+        if fuel < best_fuel:
+            best_fuel, best_route = fuel, file
 
-    aircraft = aircrafts[aircraft_type]
-    results = []
-    for rf in route_files:
-        path = os.path.join("data", rf)
-        if not os.path.exists(path):
-            results.append({"route_file": rf, "error": "File not found"})
-            continue
-        route = load_route(path)
-        estimation = estimate_fuel(aircraft, route)
-        results.append({
-            "route_file": rf,
-            "total_fuel": estimation["total_fuel"],
-            "segments": estimation["segments"]
-        })
-
-    # Find best among those with numeric total_fuel
-    numeric = [r for r in results if "total_fuel" in r]
-    if not numeric:
-        return {"aircraft": aircraft_type, "options": results, "best": None}
-
-    best = min(numeric, key=lambda x: x["total_fuel"])
-    # compute savings vs best
-    for r in numeric:
-        r["extra_vs_best_kg"] = round(r["total_fuel"] - best["total_fuel"], 2)
-    return {
-        "aircraft": aircraft_type,
-        "options": results,
-        "best": best,
-        "best_total_fuel": best["total_fuel"]
-    }
+    return results, {"route": best_route, "fuel": best_fuel}
